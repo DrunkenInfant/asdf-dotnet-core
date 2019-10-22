@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
-echo Downloading the CLI installer
 
-DOWNLOADER=$(which curl)
-$DOWNLOADER -s https://dot.net/v1/dotnet-install.sh > "$ASDF_INSTALL_PATH/dotnet-install.sh"
+RELEASES_INDEX_URI=https://raw.githubusercontent.com/dotnet/core/master/release-notes/releases-index.json
+FILE="releases.json"
+KEY="release-version"
+CHANNEL=$(echo "$ASDF_INSTALL_VERSION" | grep -o '^[0-9]\+\.[0-9]\+')
+DOTNET_RID="linux-x64"
+TMP_PATH=$(mktemp -d "${TMPDIR:-/tmp}/dotnet-core.XXXXXXXXX")
 
-chmod +x "$ASDF_INSTALL_PATH/dotnet-install.sh"
+echo "Fetching releases.json path for $CHANNEL.x ..."
+RELEASES_URI=$(curl $RELEASES_INDEX_URI | jq -r '."releases-index"[] | select(."channel-version"=="'"$CHANNEL"'") | ."releases.json"')
 
-echo Installing the CLI requested version $ASDF_INSTALL_VERSION. Please wait, installation may take a few minutes.
+echo "Fetching sdk release path for $ASDF_INSTALL_VERSION ..."
+SDK_RELEASE=$(curl $RELEASES_URI | jq '.releases[] | select(."release-version"=="'"$ASDF_INSTALL_VERSION"'") | .sdk.files[] | select(.rid=="'$DOTNET_RID'")')
+SDK_RELEASE_URL=$(echo "$SDK_RELEASE" | jq -r ".url")
+SDK_RELEASE_NAME=$(echo "$SDK_RELEASE" | jq -r ".name")
+SDK_RELEASE_HASH=$(echo "$SDK_RELEASE" | jq -r ".hash")
 
-"$ASDF_INSTALL_PATH/dotnet-install.sh" --install-dir "$ASDF_INSTALL_PATH" --version "$ASDF_INSTALL_VERSION" --no-path
+echo "Downloading sdk for $ASDF_INSTALL_VERSION ..."
+curl $SDK_RELEASE_URL -o "$TMP_PATH/$SDK_RELEASE_NAME"
 
-rm "$ASDF_INSTALL_PATH/dotnet-install.sh"
-
-if [ $? -ne 0 ]
-then
-    echo Download of $ASDF_INSTALL_VERSION version of the CLI failed. Exiting now.
-    exit 0
+if echo "$SDK_RELEASE_HASH $TMP_PATH/$SDK_RELEASE_NAME" | sha512sum --strict --status -c -; then
+  echo "Installing sdk ..."
+  tar xzf "$TMP_PATH/$SDK_RELEASE_NAME" -C "$ASDF_INSTALL_PATH" && rm -r "$TMP_PATH"
+else
+  echo "Hash verification failed"
+  echo "$SDK_RELEASE_HASH $TMP_PATH/$SDK_RELEASE_NAME"
+  exit 1
 fi
-echo The CLI has been installed.
